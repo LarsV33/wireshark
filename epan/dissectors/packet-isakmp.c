@@ -141,6 +141,9 @@ static int hf_isakmp_certreq_authority_v2 = -1;
 static int hf_isakmp_certreq_authority_sig = -1;
 static int hf_isakmp_auth_meth = -1;
 static int hf_isakmp_auth_data = -1;
+static int hf_isakmp_auth_digital_sig_asn1_len = -1;
+static int hf_isakmp_auth_digital_sig_asn1_data = -1;
+static int hf_isakmp_auth_digital_sig_value = -1;
 static int hf_isakmp_notify_doi = -1;
 static int hf_isakmp_notify_protoid_v1 = -1;
 static int hf_isakmp_notify_protoid_v2 = -1;
@@ -418,6 +421,7 @@ static gint ett_isakmp = -1;
 static gint ett_isakmp_version = -1;
 static gint ett_isakmp_flags = -1;
 static gint ett_isakmp_payload = -1;
+static gint ett_isakmp_payload_digital_signature = -1;
 static gint ett_isakmp_fragment = -1;
 static gint ett_isakmp_fragments = -1;
 static gint ett_isakmp_sa = -1;
@@ -1228,6 +1232,8 @@ static const range_string cert_v2_type[] = {
   { 0,0,        NULL },
 };
 
+#define AUTH_METH_DIGITAL_SIGNATURE 14
+
 static const range_string authmeth_v2_type[] = {
   { 0,0,        "RESERVED TO IANA" },
   { 1,1,        "RSA Digital Signature" },
@@ -1737,6 +1743,74 @@ static const range_string signature_hash_algorithms[] = {
   { 6,1023,     "Unassigned" },
   { 1024,65535, "Reserved for Private Use" },
   {0,0,         NULL },
+};
+
+#define MAX_OBJID_LEN 72
+typedef struct _digital_signature_algo {
+  guint8    length;
+  guint8    objid[MAX_OBJID_LEN];
+  gchar     *strptr;
+} digital_signature_algo;
+
+/* see RFC7427, "Signature Authentication in IKEv2", https://tools.ietf.org/html/rfc7427 */
+static const digital_signature_algo signature_algorithms[] = {
+  { 15, {0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x05, 0x05, 0x00},
+    "sha1WithRSAEncryption" },
+  { 15, {0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00},
+    "sha256WithRSAEncryption" },
+  { 15, {0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0c, 0x05, 0x00},
+    "sha384WithRSAEncryption" },
+  { 15, {0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0d, 0x05, 0x00},
+    "sha512WithRSAEncryption" },
+
+  { 11, {0x30, 0x09, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x38, 0x04, 0x03},
+    "dsa-with-sha1" },
+  { 13, {0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x02},
+    "dsa-with-sha256" },
+  { 13, {0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x03},
+    "dsa-with-sha384" },
+  { 13, {0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x04},
+    "dsa-with-sha512" },
+
+  { 11, {0x30, 0x09, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x01},
+    "ecdsa-with-sha1" },
+  { 12, {0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02},
+    "ecdsa-with-sha256" },
+  { 12, {0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03},
+    "ecdsa-with-sha384" },
+  { 12, {0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x04},
+    "ecdsa-with-sha512" },
+
+  { 64, {0x30, 0x3e, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a, 0x30, 0x31, 0xa0,
+         0x0b, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0xa1, 0x18, 0x30, 0x16,
+         0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08, 0x30, 0x09, 0x06, 0x05, 0x2b,
+         0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0xa2, 0x03, 0x02, 0x01, 0x14, 0xa3, 0x03, 0x02, 0x01, 0x01},
+    "RSASSA-PSS (hash:SHA-1, maskgen:mgf1-SHA1, saltlen:20, trailer:1)" },
+  { 72, {0x30, 0x46, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a, 0x30, 0x39, 0xa0,
+         0x0f, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00,
+         0xa1, 0x1c, 0x30, 0x1a, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08, 0x30,
+         0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0xa2, 0x03,
+         0x02, 0x01, 0x20, 0xa3, 0x03, 0x02, 0x01, 0x01},
+    "RSASSA-PSS (hash:SHA-256, maskgen:mgf1-SHA256, saltlen:32, trailer:1)" },
+  { 72, {0x30, 0x46, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a, 0x30, 0x39, 0xa0,
+         0x0f, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00,
+         0xa1, 0x1c, 0x30, 0x1a, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08, 0x30,
+         0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0xa2, 0x03,
+         0x02, 0x01, 0x20, 0xa3, 0x03, 0x02, 0x01, 0x01},
+    "RSASSA-PSS (hash:SHA-384, maskgen:mgf1-SHA384, saltlen:48, trailer:1)" },
+  { 72, {0x30, 0x46, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a, 0x30, 0x39, 0xa0,
+         0x0f, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00,
+         0xa1, 0x1c, 0x30, 0x1a, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08, 0x30,
+         0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0xa2, 0x03,
+         0x02, 0x01, 0x20, 0xa3, 0x03, 0x02, 0x01, 0x01},
+    "RSASSA-PSS (hash:SHA-512, maskgen:mgf1-SHA512, saltlen:48, trailer:1)" },
+  /* The next entry just catches all unknown RSASSA-PSS entries. */
+  { 13, {0x30, 0x00, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a},
+    "RSASSA-PSS" },
+
+  /* mark the end. */
+  { 0, {0x00},
+    ""},
 };
 
 static const range_string sat_protocol_ids[] = {
@@ -4386,8 +4460,16 @@ dissect_certreq(tvbuff_t *tvb, int offset, int length, proto_tree *tree, int isa
 static void
 dissect_auth(tvbuff_t *tvb, int offset, int length, proto_tree *tree)
 {
+  guint32                       auth_meth;
+  guint32                       asn1_len;
+  GByteArray *                  asn1_data;
+  proto_item *                  ti;
+  proto_tree *                  subtree;
+  guint8                        i, j;
+  digital_signature_algo        elem;
+  gboolean                      same;
 
-  proto_tree_add_item(tree, hf_isakmp_auth_meth, tvb, offset, 1, ENC_BIG_ENDIAN);
+  proto_tree_add_item_ret_uint(tree, hf_isakmp_auth_meth, tvb, offset, 1, ENC_BIG_ENDIAN, &auth_meth);
   offset += 1;
   length -= 1;
 
@@ -4395,8 +4477,51 @@ dissect_auth(tvbuff_t *tvb, int offset, int length, proto_tree *tree)
   offset += 3;
   length -= 3;
 
-  proto_tree_add_item(tree, hf_isakmp_auth_data, tvb, offset, length, ENC_NA);
+  ti = proto_tree_add_item(tree, hf_isakmp_auth_data, tvb, offset, length, ENC_NA);
 
+  if (auth_meth == AUTH_METH_DIGITAL_SIGNATURE) {
+    subtree = proto_item_add_subtree(ti, ett_isakmp_payload_digital_signature);
+
+    proto_tree_add_item_ret_uint(subtree, hf_isakmp_auth_digital_sig_asn1_len, tvb, offset, 1, ENC_BIG_ENDIAN, &asn1_len);
+    offset += 1;
+    length -= 1;
+
+    /* cast ok, since length was parsed out of one unsigned byte into guint32 */
+    if ((int)asn1_len < length) {
+      asn1_data = g_byte_array_sized_new(asn1_len);
+      ti = proto_tree_add_bytes_item(subtree, hf_isakmp_auth_digital_sig_asn1_data, tvb, offset, asn1_len, ENC_BIG_ENDIAN, asn1_data, NULL, NULL);
+      offset += asn1_len;
+      length -= asn1_len;
+
+      /* valid asn1 data starts with 0x30 and a length field */
+      if ( ((guint8)asn1_data->data[0]) == 0x30 && ((guint8)asn1_data->data[1]) == (asn1_len-2)) {
+        for (j=0; ; j++) {
+          elem = signature_algorithms[j];
+          if (elem.length == 0) {
+            break;
+          }
+
+          if (elem.length <= asn1_len) {
+            same = TRUE;
+            for (i = 2; i < elem.length; i++) {
+              if (((guint8)asn1_data->data[i]) != (guint8)elem.objid[i]) {
+                same = FALSE;
+                break;
+              }
+            }
+            if (same==TRUE) {
+              proto_item_append_text(ti, " (%s)", elem.strptr);
+            }
+          }
+        }
+
+      }
+
+      g_byte_array_free(asn1_data, TRUE);
+
+      proto_tree_add_item(subtree, hf_isakmp_auth_digital_sig_value, tvb, offset, length, ENC_NA);
+    }
+  }
 }
 
 static void
@@ -6553,6 +6678,18 @@ proto_register_isakmp(void)
       { "Authentication Data", "isakmp.auth.data",
         FT_BYTES, BASE_NONE, NULL, 0x0,
         "IKEv2 Authentication Data", HFILL }},
+    { &hf_isakmp_auth_digital_sig_asn1_len,
+      { "ASN.1 Length", "isakmp.auth.data.sig.asn1.len",
+        FT_UINT8, BASE_DEC, NULL, 0x0,
+        "IKEv2 Authentication Data Digital Signature ASN.1 Length", HFILL } },
+    { &hf_isakmp_auth_digital_sig_asn1_data,
+      { "ASN.1 Data", "isakmp.auth.data.sig.asn1.data",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "IKEv2 Authentication Data Digital Signature ASN.1 Data", HFILL } },
+    { &hf_isakmp_auth_digital_sig_value,
+      { "Signature Value", "isakmp.auth.data.sig.value",
+        FT_BYTES, BASE_NONE, NULL, 0x0,
+        "IKEv2 Authentication Data Digital Signature Value", HFILL } },
     { &hf_isakmp_notify_doi,
       { "Domain of interpretation", "isakmp.notify.doi",
         FT_UINT32, BASE_DEC, VALS(doi_type), 0x0,
@@ -7725,6 +7862,7 @@ proto_register_isakmp(void)
     &ett_isakmp_version,
     &ett_isakmp_flags,
     &ett_isakmp_payload,
+    &ett_isakmp_payload_digital_signature,
     &ett_isakmp_fragment,
     &ett_isakmp_fragments,
     &ett_isakmp_sa,
